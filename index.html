@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>足底图片浏览网站</title>
+    <style>
+        :root { --bg: #f8f9fa; --text: #212529; --accent: #007bff; }
+        [data-theme="dark"] { --bg: #212529; --text: #f8f9fa; --accent: #4da3ff; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; transition: all 0.3s; }
+        header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+        button { padding: 8px 16px; margin: 5px; border: none; border-radius: 6px; cursor: pointer; background: var(--accent); color: white; }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; }
+        .gallery.list-view { grid-template-columns: 1fr; }
+        .card { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--bg); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .card img { width: 100%; height: 200px; object-fit: cover; }
+        .tags { padding: 8px; font-size: 0.85em; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-content { position: relative; max-width: 95%; max-height: 95%; }
+        .modal img { max-width: 100%; max-height: 80vh; transition: transform 0.2s ease; cursor: zoom-in; }
+        .close, .prev, .next { position: absolute; color: white; font-size: 40px; cursor: pointer; user-select: none; }
+        .close { top: -20px; right: -20px; }
+        .prev { left: -60px; top: 50%; }
+        .next { right: -60px; top: 50%; }
+        .admin-panel { margin-top: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; display: none; }
+        input[type="file"] { margin: 8px 0; }
+    </style>
+</head>
+<body data-theme="light">
+    <header>
+        <h1>足底图片库</h1>
+        <div>
+            <button onclick="toggleView()">切换网格/列表</button>
+            <button onclick="toggleTheme()">切换日/夜模式</button>
+            <button onclick="showAdmin()">后台管理</button>
+        </div>
+    </header>
+
+    <div id="tag-filters" style="margin-bottom: 15px;"></div>
+    <div id="gallery" class="gallery"></div>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">×</span>
+            <span class="prev" onclick="prevImage()">‹</span>
+            <img id="modal-img" src="" alt="">
+            <span class="next" onclick="nextImage()">›</span>
+            <button onclick="toggleAutoplay()" id="autoplay-btn" style="position:absolute; top:20px; right:20px;">自动播放 (3秒)</button>
+        </div>
+    </div>
+
+    <div id="admin-panel" class="admin-panel">
+        <h2>后台管理 - 添加图片</h2>
+        
+        <h3>方式一：直接选择本地 JPG 图片</h3>
+        <input type="file" id="image-file" accept="image/jpeg,image/jpg,image/png,image/webp" onchange="handleFileSelect(event)">
+        <input type="text" id="file-tags" placeholder="标签 (逗号分隔，例如: 左足,跟骨)" style="width:400px;">
+        <button onclick="addLocalImage()">添加本地图片</button>
+
+        <h3>方式二：输入网络图片 URL</h3>
+        <input type="text" id="image-url" placeholder="图片URL[](https://...)" style="width:400px;">
+        <input type="text" id="url-tags" placeholder="标签 (逗号分隔)">
+        <button onclick="addUrlImage()">添加 URL 图片</button>
+
+        <hr>
+        <button onclick="exportData()">导出 data.json</button>
+        <input type="file" id="import-file" accept=".json" onchange="importData(event)">
+        <div id="admin-list" style="margin-top:20px;"></div>
+        <button onclick="hideAdmin()">关闭后台</button>
+    </div>
+
+    <script>
+        let images = [];
+        let currentIndex = 0;
+        let isGrid = true;
+        let autoplayInterval = null;
+        let scale = 1;
+        let modalImg = null;
+
+        async function loadData() {
+            try {
+                const res = await fetch('data.json');
+                if (res.ok) {
+                    images = await res.json() || [];
+                }
+            } catch (e) {
+                console.warn('data.json 加载失败，使用空数组', e);
+                images = [];
+            }
+            renderGallery();
+            renderTagFilters();
+        }
+
+        function renderGallery(filtered = images) {
+            const gallery = document.getElementById('gallery');
+            gallery.innerHTML = '';
+            gallery.classList.toggle('list-view', !isGrid);
+            filtered.forEach((img, i) => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `<img src="${img.url}" alt=""><div class="tags">标签: ${(img.tags || []).join(', ')}</div>`;
+                card.onclick = () => openModal(i);
+                gallery.appendChild(card);
+            });
+        }
+
+        function renderTagFilters() {
+            const container = document.getElementById('tag-filters');
+            container.innerHTML = '<strong>按标签筛选：</strong> ';
+            const allTags = [...new Set(images.flatMap(img => img.tags || []))];
+            allTags.forEach(tag => {
+                const btn = document.createElement('button');
+                btn.textContent = tag;
+                btn.onclick = () => filterByTag(tag);
+                container.appendChild(btn);
+            });
+        }
+
+        function filterByTag(tag) {
+            const filtered = images.filter(img => (img.tags || []).includes(tag));
+            renderGallery(filtered);
+        }
+
+        function toggleView() { isGrid = !isGrid; renderGallery(); }
+        function toggleTheme() {
+            const theme = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            document.body.setAttribute('data-theme', theme);
+        }
+
+        function openModal(index) {
+            if (images.length === 0) return;
+            currentIndex = index;
+            modalImg = document.getElementById('modal-img');
+            document.getElementById('modal').style.display = 'flex';
+            scale = 1;
+            showCurrentImage();
+        }
+
+        function showCurrentImage() {
+            if (modalImg && images[currentIndex]) {
+                modalImg.src = images[currentIndex].url;
+                modalImg.style.transform = `scale(${scale})`;
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+            stopAutoplay();
+        }
+
+        function prevImage() { if (images.length === 0) return; currentIndex = (currentIndex - 1 + images.length) % images.length; showCurrentImage(); stopAutoplay(); }
+        function nextImage() { if (images.length === 0) return; currentIndex = (currentIndex + 1) % images.length; showCurrentImage(); stopAutoplay(); }
+
+        function toggleAutoplay() {
+            const btn = document.getElementById('autoplay-btn');
+            if (autoplayInterval) {
+                stopAutoplay(); btn.textContent = '自动播放 (3秒)';
+            } else {
+                autoplayInterval = setInterval(nextImage, 3000);
+                btn.textContent = '停止播放';
+            }
+        }
+
+        function stopAutoplay() {
+            if (autoplayInterval) clearInterval(autoplayInterval);
+            autoplayInterval = null;
+        }
+
+        document.getElementById('modal').addEventListener('wheel', (e) => {
+            if (document.getElementById('modal').style.display === 'flex') {
+                e.preventDefault();
+                scale += e.deltaY * -0.001;
+                scale = Math.max(0.5, Math.min(scale, 5));
+                if (modalImg) modalImg.style.transform = `scale(${scale})`;
+            }
+        });
+
+        function showAdmin() { document.getElementById('admin-panel').style.display = 'block'; renderAdminList(); }
+        function hideAdmin() { document.getElementById('admin-panel').style.display = 'none'; }
+
+        // 处理本地文件选择并转为 base64
+        let selectedFile = null;
+        function handleFileSelect(e) {
+            selectedFile = e.target.files[0];
+        }
+
+        async function addLocalImage() {
+            if (!selectedFile) return alert('请先选择图片文件');
+            const tagsStr = document.getElementById('file-tags').value.trim();
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                images.push({ url: ev.target.result, tags: tags });
+                renderGallery();
+                renderTagFilters();
+                renderAdminList();
+                alert('本地图片添加成功！请导出 data.json 并上传至 GitHub');
+                selectedFile = null;
+                document.getElementById('image-file').value = '';
+            };
+            reader.readAsDataURL(selectedFile);
+        }
+
+        function addUrlImage() {
+            const url = document.getElementById('image-url').value.trim();
+            const tagsStr = document.getElementById('url-tags').value.trim();
+            if (!url) return alert('请输入图片 URL');
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+            images.push({ url, tags });
+            renderGallery(); renderTagFilters(); renderAdminList();
+            alert('URL 图片添加成功！请导出 data.json');
+        }
+
+        function renderAdminList() {
+            const container = document.getElementById('admin-list');
+            container.innerHTML = images.map((img, i) => `
+                <div style="margin:10px 0; padding:10px; border:1px solid #ddd;">
+                    <img src="${img.url}" style="height:80px;vertical-align:middle;"> 
+                    标签: ${(img.tags || []).join(', ')} 
+                    <button onclick="deleteImage(${i})">删除</button>
+                </div>
+            `).join('');
+        }
+
+        function deleteImage(i) {
+            if (confirm('确认删除？')) {
+                images.splice(i, 1);
+                renderGallery(); renderTagFilters(); renderAdminList();
+            }
+        }
+
+        function exportData() {
+            const dataStr = JSON.stringify(images, null, 2);
+            const blob = new Blob([dataStr], {type: 'application/json'});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'data.json';
+            link.click();
+        }
+
+        function importData(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    images = JSON.parse(ev.target.result);
+                    renderGallery(); renderTagFilters(); renderAdminList();
+                    alert('导入成功');
+                } catch (err) { alert('JSON 格式错误'); }
+            };
+            reader.readAsText(file);
+        }
+
+        window.onload = loadData;
+    </script>
+</body>
+</html>
