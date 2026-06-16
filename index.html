@@ -52,10 +52,10 @@
     <div id="admin-panel" class="admin-panel">
         <h2>后台管理 - 添加图片</h2>
         
-        <h3>方式一：直接选择本地 JPG 图片</h3>
-        <input type="file" id="image-file" accept="image/jpeg,image/jpg,image/png,image/webp" onchange="handleFileSelect(event)">
+        <h3>方式一：直接选择多张本地图片（推荐）</h3>
+        <input type="file" id="image-file" accept="image/jpeg,image/jpg,image/png,image/webp" multiple onchange="handleFileSelect(event)">
         <input type="text" id="file-tags" placeholder="标签 (逗号分隔，例如: 左足,跟骨)" style="width:400px;">
-        <button onclick="addLocalImage()">添加本地图片</button>
+        <button onclick="addLocalImages()">添加选中的多张图片</button>
 
         <h3>方式二：输入网络图片 URL</h3>
         <input type="text" id="image-url" placeholder="图片URL[](https://...)" style="width:400px;">
@@ -80,11 +80,9 @@
         async function loadData() {
             try {
                 const res = await fetch('data.json');
-                if (res.ok) {
-                    images = await res.json() || [];
-                }
+                if (res.ok) images = await res.json() || [];
             } catch (e) {
-                console.warn('data.json 加载失败，使用空数组', e);
+                console.warn('data.json 加载失败', e);
                 images = [];
             }
             renderGallery();
@@ -153,12 +151,8 @@
 
         function toggleAutoplay() {
             const btn = document.getElementById('autoplay-btn');
-            if (autoplayInterval) {
-                stopAutoplay(); btn.textContent = '自动播放 (3秒)';
-            } else {
-                autoplayInterval = setInterval(nextImage, 3000);
-                btn.textContent = '停止播放';
-            }
+            if (autoplayInterval) { stopAutoplay(); btn.textContent = '自动播放 (3秒)'; }
+            else { autoplayInterval = setInterval(nextImage, 3000); btn.textContent = '停止播放'; }
         }
 
         function stopAutoplay() {
@@ -178,28 +172,33 @@
         function showAdmin() { document.getElementById('admin-panel').style.display = 'block'; renderAdminList(); }
         function hideAdmin() { document.getElementById('admin-panel').style.display = 'none'; }
 
-        // 处理本地文件选择并转为 base64
-        let selectedFile = null;
+        let selectedFiles = [];
         function handleFileSelect(e) {
-            selectedFile = e.target.files[0];
+            selectedFiles = Array.from(e.target.files);
         }
 
-        async function addLocalImage() {
-            if (!selectedFile) return alert('请先选择图片文件');
+        async function addLocalImages() {
+            if (selectedFiles.length === 0) return alert('请先选择图片文件');
             const tagsStr = document.getElementById('file-tags').value.trim();
             const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
 
-            const reader = new FileReader();
-            reader.onload = function(ev) {
-                images.push({ url: ev.target.result, tags: tags });
-                renderGallery();
-                renderTagFilters();
-                renderAdminList();
-                alert('本地图片添加成功！请导出 data.json 并上传至 GitHub');
-                selectedFile = null;
-                document.getElementById('image-file').value = '';
-            };
-            reader.readAsDataURL(selectedFile);
+            for (let file of selectedFiles) {
+                await new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onload = function(ev) {
+                        images.push({ url: ev.target.result, tags: tags });
+                        resolve();
+                    };
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            renderGallery();
+            renderTagFilters();
+            renderAdminList();
+            alert(`成功添加 ${selectedFiles.length} 张图片！请导出 data.json 并上传至 GitHub`);
+            selectedFiles = [];
+            document.getElementById('image-file').value = '';
         }
 
         function addUrlImage() {
